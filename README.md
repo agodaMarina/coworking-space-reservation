@@ -324,15 +324,11 @@ Utilisez les issues GitHub pour signaler les bugs.
 4. Pushez la branche (`git push origin feature/nouvelle-fonctionnalite`)
 5. Ouvrez une Pull Request
 
-## Licence
-
-Ce projet est sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
-
 ## Contact
 
-Pour toute question, contactez l'équipe de développement à [votre-email@domaine.com]
+Pour toute question, contactez l'équipe de développement à [macaagoda@gmail.com]
 
 ---
 
-Développé avec ❤️ pour la communauté coworking</content>
+Développé avec ❤️ </content>
 <filePath>README.md
