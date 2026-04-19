@@ -130,7 +130,7 @@ def send_reservation_reminder():
     from apps.reservations.models import Reservation
     from datetime import timedelta
 
-    tomorrow = timezone.now() + timedelta(hours=24)
+    tomorrow = timezone.now() + timedelta(hours=48)
     upcoming = Reservation.objects.filter(
         status='confirmed',
         start_datetime__lte=tomorrow,

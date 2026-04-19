@@ -245,6 +245,8 @@ Assurez-vous de configurer :
 - Variables d'environnement pour la base de données, Stripe, email
 - Serveur web (Nginx + Gunicorn recommandé)
 - HTTPS obligatoire
+# Carte de test
+4242 4242 4242 4242  |  12/34  |  123
 
 ### Variables d'environnement de production
 
@@ -284,7 +286,7 @@ CORS_ALLOWED_ORIGINS=https://votre-domaine.com,https://www.votre-domaine.com
 ### Branches
 
 - `main` : Code de production
-- `develop` : Développement actif
+- `dev` : Développement actif
 - `feature/*` : Nouvelles fonctionnalités
 
 ### Commits

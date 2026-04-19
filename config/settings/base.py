@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     'apps.notifications',
 ]
 
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
@@ -129,9 +130,11 @@ AUTH_PASSWORD_VALIDATORS = [
      'OPTIONS': {'min_length': 8}},
     {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
-]# Résoudre les conflits de nommage des enums dans Swagger
+]
+
+# Résoudre les conflits de nommage des enums dans Swagger
 SPECTACULAR_SETTINGS['ENUM_NAME_OVERRIDES'] = {
-    'ReservationStatusEnum': 'apps.reservations.models.Reservation.Status',
+    'ReservationStatusEnum': 'apps.reservations.models.   Reservation.Status',
     'PaymentStatusEnum': 'apps.payments.models.Payment.Status',
     'PaymentMethodEnum': 'apps.payments.models.Payment.Method',
 }

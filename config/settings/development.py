@@ -15,6 +15,12 @@ DATABASES = {
     }
 }
 
+STRIPE={
+    'SECRET_KEY': config('STRIPE_SECRET_KEY'),
+    'PUBLISHABLE_KEY': config('STRIPE_PUBLISHABLE_KEY'),
+    'WEBHOOK_SECRET': config('STRIPE_WEBHOOK_SECRET')
+}
+
 CORS_ALLOW_ALL_ORIGINS = True
 
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'

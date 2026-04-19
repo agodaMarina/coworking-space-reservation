@@ -7,6 +7,7 @@ from .views import (
     PaymentStatsView,
     PaymentRefundView,
     InvoiceDownloadView,
+    StripeWebhookView,
 )
 
 app_name = 'payments'
@@ -18,5 +19,7 @@ urlpatterns = [
     path('<int:pk>/confirm/', PaymentConfirmView.as_view(), name='payment-confirm'),
     path('stats/',            PaymentStatsView.as_view(),  name='payment-stats'),
     path('<int:pk>/refund/',    PaymentRefundView.as_view(),  name='payment-refund'),
-    path('<int:pk>/invoice/',   InvoiceDownloadView.as_view(), name='invoice-download')
+    path('<int:pk>/invoice/',   InvoiceDownloadView.as_view(), name='invoice-download'),
+    path('webhook/',            StripeWebhookView.as_view(),   name='stripe-webhook')
 ]
+
