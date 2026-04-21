@@ -1,0 +1,1 @@
+# Vide — transforme settings/ en package Python

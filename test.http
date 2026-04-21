@@ -1,0 +1,24 @@
+### Login admin
+POST http://127.0.0.1:8000/api/auth/login/
+Content-Type: application/json
+
+{
+    "email": "admin@coworking.com",
+    "password": "admin1234"
+}
+
+### Créer un espace (remplace TON_TOKEN par le token access obtenu ci-dessus)
+POST http://127.0.0.1:8000/api/spaces/create/
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzc1MTM2MjMyLCJpYXQiOjE3NzUxMzI2MzIsImp0aSI6ImRjNTI4MmM3MDIwMDRiZWViYTE0OWMyNTllMjc0NTM2IiwidXNlcl9pZCI6IjEifQ.I89heOD7hUY4XcAQ_CzvJideIe-0oLdlHz7W9_-eIZI
+{
+    "name": "Salle Innovation",
+    "space_type": "meeting_room",
+    "description": "Salle de réunion moderne",
+    "capacity": 10,
+    "price_per_hour": "5000.00",
+    "price_per_day": "30000.00",
+    "address": "Lomé, Togo",
+    "is_available": true,
+    "amenities": []
+}
