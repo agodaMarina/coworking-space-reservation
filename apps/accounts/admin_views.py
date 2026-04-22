@@ -6,7 +6,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema
 
 from .models import User
-from .serializers import UserProfileSerializer, AdminUserUpdateSerializer
+from .serializers import UserProfileSerializer, AdminUserUpdateSerializer, AdminCreateUserSerializer
 from .permissions import IsAdminUser
 
 
@@ -74,3 +74,59 @@ class AdminUserUpdateView(APIView):
             'message': 'Utilisateur mis à jour avec succès.',
             'user': UserProfileSerializer(updated_user).data
         }, status=status.HTTP_200_OK)
+
+
+class AdminCreateUserView(APIView):
+    """Créer un utilisateur (admin ou client) — admin seulement"""
+    permission_classes = [IsAdminUser]
+
+    @extend_schema(
+        request=AdminCreateUserSerializer,
+        responses={201: UserProfileSerializer},
+        summary="Créer un utilisateur (admin)",
+        tags=['Administration']
+    )
+    def post(self, request):
+        serializer = AdminCreateUserSerializer(data=request.data)
+        if not serializer.is_valid():
+            first_field = list(serializer.errors.keys())[0]
+            return Response(
+                {'error': f"Erreur sur le champ '{first_field}': {serializer.errors[first_field][0]}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        user = serializer.save()
+        return Response({
+            'message': 'Utilisateur créé avec succès.',
+            'user': UserProfileSerializer(user).data
+        }, status=status.HTTP_201_CREATED)
+
+
+class AdminDeleteUserView(APIView):
+    """Supprimer un utilisateur — admin seulement"""
+    permission_classes = [IsAdminUser]
+
+    @extend_schema(
+        responses={204: None},
+        summary="Supprimer un utilisateur (admin)",
+        tags=['Administration']
+    )
+    def delete(self, request, pk):
+        try:
+            user = User.objects.get(id=pk)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Utilisateur introuvable.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if user == request.user:
+            return Response(
+                {'error': 'Vous ne pouvez pas supprimer votre propre compte.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user.delete()
+        return Response(
+            {'message': 'Utilisateur supprimé avec succès.'},
+            status=status.HTTP_204_NO_CONTENT
+        )

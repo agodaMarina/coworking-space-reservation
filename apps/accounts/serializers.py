@@ -37,7 +37,12 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def validate_phone(self, value):
         if value:
-            if not re.match(r'^\+?1?\d{9,15}$', value):
+            if not re.match(r'^\+?[\d\s\-\(\)\.]{7,20}$', value):
+                raise serializers.ValidationError(
+                    "Le numéro de téléphone est invalide."
+                )
+            digits = re.sub(r'\D', '', value)
+            if not (7 <= len(digits) <= 15):
                 raise serializers.ValidationError(
                     "Le numéro de téléphone est invalide."
                 )
@@ -153,4 +158,70 @@ class AdminUserUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['is_active', 'role', 'is_verified']
-        # On peut ajouter des validations spécifiques ici si besoin
+
+
+class AdminCreateUserSerializer(serializers.ModelSerializer):
+    """Serializer pour la création d'un utilisateur par un admin"""
+
+    password = serializers.CharField(
+        write_only=True,
+        required=True,
+        validators=[validate_password],
+        style={'input_type': 'password'}
+    )
+    password_confirm = serializers.CharField(
+        write_only=True,
+        required=True,
+        style={'input_type': 'password'}
+    )
+    role = serializers.ChoiceField(
+        choices=User.Role.choices,
+        default=User.Role.CLIENT
+    )
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'email', 'username',
+            'first_name', 'last_name',
+            'phone', 'role',
+            'password', 'password_confirm'
+        ]
+        extra_kwargs = {
+            'first_name': {'required': True},
+            'last_name':  {'required': True},
+        }
+
+    def validate_email(self, value):
+        return value.lower().strip()
+
+    def validate_phone(self, value):
+        if value:
+            if not re.match(r'^\+?[\d\s\-\(\)\.]{7,20}$', value):
+                raise serializers.ValidationError(
+                    "Le numéro de téléphone est invalide."
+                )
+            digits = re.sub(r'\D', '', value)
+            if not (7 <= len(digits) <= 15):
+                raise serializers.ValidationError(
+                    "Le numéro de téléphone est invalide."
+                )
+        return value
+
+    def validate(self, attrs):
+        if attrs['password'] != attrs['password_confirm']:
+            raise serializers.ValidationError(
+                {'password': 'Les mots de passe ne correspondent pas.'}
+            )
+        return attrs
+
+    def create(self, validated_data):
+        validated_data.pop('password_confirm')
+        role = validated_data.pop('role', User.Role.CLIENT)
+        user = User.objects.create_user(**validated_data)
+        user.role = role
+        if role == User.Role.ADMIN:
+            user.is_staff = True
+        user.is_verified = True
+        user.save()
+        return user

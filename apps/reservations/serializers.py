@@ -76,9 +76,30 @@ class ReservationCreateSerializer(serializers.Serializer):
         return attrs
 
 
+VALID_TRANSITIONS = {
+    Reservation.Status.PENDING:   {Reservation.Status.CONFIRMED, Reservation.Status.REJECTED, Reservation.Status.CANCELLED},
+    Reservation.Status.CONFIRMED: {Reservation.Status.CANCELLED, Reservation.Status.COMPLETED},
+    Reservation.Status.CANCELLED: set(),
+    Reservation.Status.COMPLETED: set(),
+    Reservation.Status.REJECTED:  set(),
+}
+
+
 class ReservationUpdateSerializer(serializers.ModelSerializer):
     """Serializer pour modifier le statut d'une réservation — admin"""
 
     class Meta:
         model = Reservation
         fields = ['status', 'notes']
+
+    def validate_status(self, new_status):
+        if self.instance:
+            current = self.instance.status
+            allowed = VALID_TRANSITIONS.get(current, set())
+            if new_status not in allowed:
+                readable = sorted(allowed) if allowed else ['aucune']
+                raise serializers.ValidationError(
+                    f"Transition '{current}' → '{new_status}' non autorisée. "
+                    f"Transitions valides depuis '{current}' : {readable}."
+                )
+        return new_status

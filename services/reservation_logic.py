@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.utils import timezone
 from .availability import check_availability, calculate_price
 from apps.reservations.models import Reservation
@@ -40,11 +42,13 @@ def cancel_reservation(reservation, user):
     if reservation.user != user and not user.is_admin:
         return False, "Vous n'êtes pas autorisé à annuler cette réservation."
 
-    if reservation.status == 'cancelled':
-        return False, "Cette réservation est déjà annulée."
+    if reservation.status in ('cancelled', 'completed', 'rejected'):
+        labels = {'cancelled': 'déjà annulée', 'completed': 'terminée', 'rejected': 'rejetée'}
+        return False, f"Impossible d'annuler une réservation {labels[reservation.status]}."
 
-    if reservation.status == 'completed':
-        return False, "Impossible d'annuler une réservation terminée."
+    if not user.is_admin:
+        if reservation.start_datetime - timezone.now() < timedelta(hours=24):
+            return False, "L'annulation doit être effectuée au moins 24h avant le début de la réservation."
 
     reservation.status = 'cancelled'
     reservation.save()

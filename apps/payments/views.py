@@ -27,6 +27,7 @@ from .serializers import (
 )
 from apps.reservations.models import Reservation
 from apps.accounts.permissions import IsAdminUser
+from apps.notifications.tasks import send_payment_completed_email
 
 # ── Import du gateway Stripe ───
 from services.payment_gateway import (
@@ -268,6 +269,20 @@ class PaymentStripeConfirmView(APIView):
                 payment.id, payment.transaction_id, reservation.id,
             )
 
+            try:
+                send_payment_completed_email.delay(
+                    user_email=payment.user.email,
+                    user_name=payment.user.full_name,
+                    payment_data={
+                        'amount': str(payment.amount),
+                        'method': payment.get_method_display(),
+                        'transaction_id': payment.transaction_id,
+                        'reservation_id': reservation.id,
+                    }
+                )
+            except Exception:
+                pass
+
         return Response({
             'message': 'Paiement confirmé avec succès ✅' if result['paid'] else 'Paiement non finalisé côté Stripe.',
             'stripe_status': result['status'],
@@ -394,6 +409,20 @@ class PaymentConfirmView(APIView):
                 "[Payment] #%s confirmé manuellement par admin — réservation #%s confirmée",
                 payment.id, reservation.id,
             )
+
+            try:
+                send_payment_completed_email.delay(
+                    user_email=payment.user.email,
+                    user_name=payment.user.full_name,
+                    payment_data={
+                        'amount': str(payment.amount),
+                        'method': payment.get_method_display(),
+                        'transaction_id': payment.transaction_id,
+                        'reservation_id': reservation.id,
+                    }
+                )
+            except Exception:
+                pass
 
         # ── Paiement remboursé ────────────────────────────────────────────────
         elif new_status == Payment.Status.REFUNDED:
@@ -752,6 +781,20 @@ class StripeWebhookView(APIView):
             "[Webhook] Paiement #%s confirmé — réservation #%s → confirmed",
             payment.id, reservation.id,
         )
+
+        try:
+            send_payment_completed_email.delay(
+                user_email=payment.user.email,
+                user_name=payment.user.full_name,
+                payment_data={
+                    'amount': str(payment.amount),
+                    'method': payment.get_method_display(),
+                    'transaction_id': payment.transaction_id,
+                    'reservation_id': reservation.id,
+                }
+            )
+        except Exception:
+            pass
 
     def _handle_payment_failed(self, pi_id: str, error_msg: str) -> None:
         """Met le paiement en 'failed' après un échec Stripe."""

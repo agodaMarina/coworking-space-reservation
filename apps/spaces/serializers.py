@@ -131,10 +131,25 @@ class SpaceCreateUpdateSerializer(serializers.ModelSerializer):
         return data
 
 
+class FileOrBase64Field(serializers.Field):
+    """Champ qui accepte un fichier multipart OU une string base64"""
+
+    def to_internal_value(self, data):
+        from django.core.files.uploadedfile import UploadedFile
+        if isinstance(data, (str, UploadedFile)):
+            return data
+        raise serializers.ValidationError(
+            "Fournissez un fichier image ou une image encodée en base64."
+        )
+
+    def to_representation(self, value):
+        return None
+
+
 class SpacePhotoUploadSerializer(serializers.Serializer):
     """Serializer dédié à l'upload de fichiers photos"""
 
-    file = serializers.CharField()  # Accepte string base64 ou fichier
+    file = FileOrBase64Field()
     is_primary = serializers.BooleanField(default=False)
 
     def validate_file(self, value):

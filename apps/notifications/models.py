@@ -7,7 +7,9 @@ class Notification(models.Model):
     """Notification envoyée à un utilisateur"""
 
     class Type(models.TextChoices):
+        RESERVATION_RECEIVED   = 'reservation_received',   'Demande reçue'
         RESERVATION_CONFIRMED  = 'reservation_confirmed',  'Réservation confirmée'
+        RESERVATION_REJECTED   = 'reservation_rejected',   'Réservation rejetée'
         RESERVATION_CANCELLED  = 'reservation_cancelled',  'Réservation annulée'
         RESERVATION_REMINDER   = 'reservation_reminder',   'Rappel de réservation'
         PAYMENT_COMPLETED      = 'payment_completed',      'Paiement effectué'
@@ -73,3 +75,17 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"Notification {self.get_notification_type_display()} — {self.user} — {self.get_status_display()}"
+
+    @classmethod
+    def create(cls, user, notification_type, message, reservation=None, channel='email'):
+        """Crée et sauvegarde immédiatement une notification en base."""
+        from django.utils import timezone
+        return cls.objects.create(
+            user=user,
+            reservation=reservation,
+            notification_type=notification_type,
+            channel=channel,
+            status=cls.Status.SENT,
+            message=message,
+            sent_at=timezone.now(),
+        )

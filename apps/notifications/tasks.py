@@ -6,6 +6,61 @@ from django.conf import settings
 
 
 @shared_task(bind=True, max_retries=3)
+def send_reservation_received_email(self, user_email, user_name, reservation_data):
+    """Envoie un email de réception de demande de réservation (statut : en attente)"""
+    try:
+        subject = f"Demande de réservation #{reservation_data['id']} reçue"
+        text_content = f"""
+        Bonjour {user_name},
+        Votre demande de réservation #{reservation_data['id']} a bien été reçue et est en attente de confirmation.
+        Espace : {reservation_data['space_name']}
+        Début : {reservation_data['start_datetime']}
+        Fin : {reservation_data['end_datetime']}
+        Montant estimé : {reservation_data['total_price']} FCFA
+        Vous recevrez un email dès que votre réservation sera confirmée ou rejetée.
+        """
+        send_mail(
+            subject=subject,
+            message=text_content,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user_email],
+            fail_silently=False,
+        )
+
+        return f"Email de réception envoyé à {user_email}"
+
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=60)
+
+
+@shared_task(bind=True, max_retries=3)
+def send_reservation_rejected_email(self, user_email, user_name, reservation_data):
+    """Envoie un email de rejet de réservation"""
+    try:
+        subject = f"Réservation #{reservation_data['id']} non confirmée"
+        text_content = f"""
+        Bonjour {user_name},
+        Nous sommes désolés, votre réservation #{reservation_data['id']} n'a pas pu être confirmée.
+        Espace : {reservation_data['space_name']}
+        Début : {reservation_data['start_datetime']}
+        Fin : {reservation_data['end_datetime']}
+        Vous pouvez effectuer une nouvelle demande pour un autre créneau.
+        """
+        send_mail(
+            subject=subject,
+            message=text_content,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user_email],
+            fail_silently=False,
+        )
+
+        return f"Email de rejet envoyé à {user_email}"
+
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=60)
+
+
+@shared_task(bind=True, max_retries=3)
 def send_reservation_confirmed_email(self, user_email, user_name, reservation_data):
     """Envoie un email de confirmation de réservation"""
     try:
@@ -38,14 +93,6 @@ def send_reservation_confirmed_email(self, user_email, user_name, reservation_da
         )
         email.attach_alternative(html_content, "text/html")
         email.send()
-
-        _save_notification(
-            user_email=user_email,
-            reservation_id=reservation_data['id'],
-            notification_type='reservation_confirmed',
-            channel='email',
-            message=text_content,
-        )
 
         return f"Email envoyé à {user_email}"
 
@@ -82,14 +129,6 @@ def send_reservation_cancelled_email(self, user_email, user_name, reservation_da
         email.attach_alternative(html_content, "text/html")
         email.send()
 
-        _save_notification(
-            user_email=user_email,
-            reservation_id=reservation_data['id'],
-            notification_type='reservation_cancelled',
-            channel='email',
-            message=text_content,
-        )
-
         return f"Email d'annulation envoyé à {user_email}"
 
     except Exception as exc:
@@ -119,6 +158,22 @@ def send_payment_completed_email(self, user_email, user_name, payment_data):
 
     except Exception as exc:
         raise self.retry(exc=exc, countdown=60)
+
+
+@shared_task
+def mark_completed_reservations():
+    """
+    Tâche périodique — passe en COMPLETED les réservations CONFIRMED dont la date de fin est passée.
+    Planifiée toutes les heures via Celery Beat.
+    """
+    from apps.reservations.models import Reservation
+
+    updated = Reservation.objects.filter(
+        status=Reservation.Status.CONFIRMED,
+        end_datetime__lt=timezone.now(),
+    ).update(status=Reservation.Status.COMPLETED)
+
+    return f"{updated} réservation(s) marquée(s) comme terminées."
 
 
 @shared_task

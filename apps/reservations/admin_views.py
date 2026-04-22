@@ -33,12 +33,12 @@ class DashboardView(APIView):
         date_to = request.query_params.get('date_to')
 
         if date_from:
-            date_from = datetime.strptime(date_from, '%Y-%m-%d')
+            date_from = timezone.make_aware(datetime.strptime(date_from, '%Y-%m-%d'))
         else:
             date_from = timezone.now() - timedelta(days=30)
 
         if date_to:
-            date_to = datetime.strptime(date_to, '%Y-%m-%d')
+            date_to = timezone.make_aware(datetime.strptime(date_to, '%Y-%m-%d'))
         else:
             date_to = timezone.now()
 
@@ -55,7 +55,8 @@ class DashboardView(APIView):
 
         total = reservations.count()
         confirmed = reservations.filter(status='confirmed').count()
-        occupancy_rate = round(confirmed / total, 2) if total > 0 else 0
+        completed = reservations.filter(status='completed').count()
+        occupancy_rate = round((confirmed + completed) / total, 2) if total > 0 else 0
 
         bookings_today = Reservation.objects.filter(
             start_datetime__date=timezone.now().date()

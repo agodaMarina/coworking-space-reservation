@@ -8,7 +8,7 @@ from .views import (
     ChangePasswordView,
     UserListView,
 )
-from .admin_views import AdminUserListView, AdminUserUpdateView
+from .admin_views import AdminUserListView, AdminUserUpdateView, AdminCreateUserView, AdminDeleteUserView
 
 app_name = 'accounts'
 
@@ -30,5 +30,7 @@ urlpatterns = [
 
     # Admin users
     path('admin/users/',          AdminUserListView.as_view(),       name='admin-user-list'),
+    path('admin/users/create/',   AdminCreateUserView.as_view(),     name='admin-user-create'),
     path('admin/users/<int:pk>/', AdminUserUpdateView.as_view(),     name='admin-user-update'),
+    path('admin/users/<int:pk>/delete/', AdminDeleteUserView.as_view(), name='admin-user-delete'),
 ]

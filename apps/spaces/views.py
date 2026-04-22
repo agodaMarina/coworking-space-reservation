@@ -234,6 +234,14 @@ class SpaceAvailabilityGetView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if not space.is_available:
+            return Response({
+                "space_id": pk,
+                "space_name": space.name,
+                "is_available": False,
+                "message": "Cet espace n'est pas disponible à la réservation.",
+            }, status=status.HTTP_200_OK)
+
         is_available, message = check_availability(space, start, end)
 
         response_data = {
@@ -253,7 +261,7 @@ class SpaceAvailabilityGetView(APIView):
 
 
 class SpacePhotoUploadView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminUser]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     @extend_schema(
@@ -284,7 +292,6 @@ class SpacePhotoUploadView(APIView):
         next_position = max_position + 1
 
         try:
-            # Création
             SpacePhoto.objects.create(
                 space=space,
                 file=serializer.validated_data["file"],
@@ -296,15 +303,6 @@ class SpacePhotoUploadView(APIView):
                 {"error": "Erreur lors du traitement de l'image.", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-        next_position = max_position + 1
-
-        # Création
-        SpacePhoto.objects.create(
-            space=space,
-            file=serializer.validated_data["file"],
-            is_primary=is_primary,
-            position=next_position,
-        )
 
         # LA MEILLEURE PRATIQUE :
         # On utilise le sérialiseur dédié pour rendre la réponse.

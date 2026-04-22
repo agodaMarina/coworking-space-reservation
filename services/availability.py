@@ -1,3 +1,5 @@
+import math
+
 from django.utils import timezone
 from apps.reservations.models import Reservation
 
@@ -45,11 +47,11 @@ def calculate_price(space, start_datetime, end_datetime, billing_type):
     """
     delta = end_datetime - start_datetime
     total_hours = delta.total_seconds() / 3600
-    total_days = delta.days
 
     if billing_type == 'hourly':
         total_price = float(space.price_per_hour) * total_hours
     else:
-        total_price = float(space.price_per_day) * (total_days if total_days > 0 else 1)
+        total_days = math.ceil(total_hours / 24)
+        total_price = float(space.price_per_day) * max(total_days, 1)
 
     return round(total_price, 2)
