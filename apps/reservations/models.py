@@ -7,11 +7,13 @@ class Reservation(models.Model):
     """Réservation d'un espace de coworking"""
 
     class Status(models.TextChoices):
-        PENDING   = 'pending',   'En attente'
-        CONFIRMED = 'confirmed', 'Confirmée'
-        CANCELLED = 'cancelled', 'Annulée'
-        COMPLETED = 'completed', 'Terminée'
-        REJECTED  = 'rejected',  'Rejetée'
+        PENDING         = 'pending',         'En attente'
+        CONFIRMED       = 'confirmed',       'Confirmée'
+        REJECTED        = 'rejected',        'Rejetée'
+        PAYMENT_PENDING = 'payment_pending', 'Paiement en cours'
+        PAID            = 'paid',            'Payée'
+        CANCELLED       = 'cancelled',       'Annulée'
+        COMPLETED       = 'completed',       'Terminée'
 
     class BillingType(models.TextChoices):
         HOURLY = 'hourly', 'Par heure'
@@ -71,6 +73,19 @@ class Reservation(models.Model):
     notes = models.TextField(
         blank=True,
         verbose_name='notes'
+    )
+    confirmed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='confirmée le'
+    )
+    confirmed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='confirmed_reservations',
+        verbose_name='confirmée par'
     )
     created_at = models.DateTimeField(
         auto_now_add=True,

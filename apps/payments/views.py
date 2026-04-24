@@ -27,7 +27,7 @@ from .serializers import (
 )
 from apps.reservations.models import Reservation
 from apps.accounts.permissions import IsAdminUser
-from apps.notifications.tasks import send_payment_completed_email
+from apps.notifications.tasks import send_payment_completed_email, send_payment_confirmed_to_admin
 
 # ── Import du gateway unifié ───
 from services.payment_gateway import (
@@ -101,9 +101,14 @@ class PaymentCreateView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        if reservation.status == Reservation.Status.CANCELLED:
+        if reservation.status not in [Reservation.Status.CONFIRMED, Reservation.Status.PAYMENT_PENDING]:
             return Response(
-                {'error': 'Impossible de payer une réservation annulée.'},
+                {
+                    'error': (
+                        "La réservation doit être confirmée par l'admin avant le paiement. "
+                        f"Statut actuel : {reservation.get_status_display()}."
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -311,14 +316,12 @@ class PaymentStripeConfirmView(APIView):
             payment.paid_at = now
             payment.save(update_fields=['status', 'paid_at'])
 
-            # Confirmer la réservation uniquement si elle est encore en attente
             reservation = payment.reservation
-            if reservation.status == Reservation.Status.PENDING:
-                reservation.status = Reservation.Status.CONFIRMED
-                reservation.save(update_fields=['status', 'updated_at'])
+            reservation.status = Reservation.Status.PAID
+            reservation.save(update_fields=['status', 'updated_at'])
 
             logger.info(
-                "[Payment] Stripe #%s confirmé — PI: %s — réservation #%s → confirmed",
+                "[Payment] Stripe #%s confirmé — PI: %s — réservation #%s → paid",
                 payment.id, payment.transaction_id, reservation.id,
             )
 
@@ -333,6 +336,11 @@ class PaymentStripeConfirmView(APIView):
                         'reservation_id': reservation.id,
                     }
                 )
+            except Exception:
+                pass
+
+            try:
+                send_payment_confirmed_to_admin.delay(payment.id)
             except Exception:
                 pass
 
@@ -454,12 +462,11 @@ class PaymentConfirmView(APIView):
             payment.paid_at = timezone.now()
             payment.save(update_fields=['status', 'paid_at'])
 
-            if reservation.status == Reservation.Status.PENDING:
-                reservation.status = Reservation.Status.CONFIRMED
-                reservation.save(update_fields=['status', 'updated_at'])
+            reservation.status = Reservation.Status.PAID
+            reservation.save(update_fields=['status', 'updated_at'])
 
             logger.info(
-                "[Payment] #%s confirmé manuellement par admin — réservation #%s confirmée",
+                "[Payment] #%s confirmé manuellement par admin — réservation #%s → paid",
                 payment.id, reservation.id,
             )
 
@@ -474,6 +481,11 @@ class PaymentConfirmView(APIView):
                         'reservation_id': reservation.id,
                     }
                 )
+            except Exception:
+                pass
+
+            try:
+                send_payment_confirmed_to_admin.delay(payment.id)
             except Exception:
                 pass
 
@@ -692,44 +704,40 @@ class InvoiceDownloadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        response = HttpResponse(content_type='text/plain; charset=utf-8')
-        response['Content-Disposition'] = (
-            f'attachment; filename="facture-{payment.id}.txt"'
-        )
+        try:
+            from weasyprint import HTML
+            from django.template.loader import render_to_string
 
-        content = f"""
-========================================
-        FACTURE DE PAIEMENT
-========================================
-Référence     : FACT-{payment.id:06d}
-Date          : {payment.paid_at.strftime('%d/%m/%Y %H:%M') if payment.paid_at else 'N/A'}
+            html_content = render_to_string(
+                'invoices/invoice.html',
+                {'payment': payment, 'request': request}
+            )
+            pdf = HTML(string=html_content, base_url=request.build_absolute_uri('/'))
+            pdf_bytes = pdf.write_pdf()
 
-UTILISATEUR
------------
-Nom           : {payment.user.full_name}
-Email         : {payment.user.email}
+            response = HttpResponse(pdf_bytes, content_type='application/pdf')
+            response['Content-Disposition'] = f'attachment; filename="facture-{payment.id}.pdf"'
+            return response
 
-RÉSERVATION
------------
-Espace        : {payment.reservation.space.name}
-Début         : {payment.reservation.start_datetime.strftime('%d/%m/%Y %H:%M')}
-Fin           : {payment.reservation.end_datetime.strftime('%d/%m/%Y %H:%M')}
-
-PAIEMENT
---------
-Méthode       : {payment.get_method_display()}
-Montant       : {payment.amount} {payment.currency}
-Transaction   : {payment.transaction_id}
-Statut        : {payment.get_status_display()}
-
-========================================
-     Merci pour votre confiance !
-   Coworking Space — Lomé, Togo
-========================================
-        """
-
-        response.write(content)
-        return response
+        except ImportError:
+            # Fallback texte si WeasyPrint n'est pas installé
+            response = HttpResponse(content_type='text/plain; charset=utf-8')
+            response['Content-Disposition'] = f'attachment; filename="facture-{payment.id}.txt"'
+            content = (
+                f"FACTURE DE PAIEMENT\n"
+                f"{'='*40}\n"
+                f"Référence : FACT-{payment.id:06d}\n"
+                f"Date      : {payment.paid_at.strftime('%d/%m/%Y %H:%M') if payment.paid_at else 'N/A'}\n\n"
+                f"Client    : {payment.user.full_name} ({payment.user.email})\n"
+                f"Espace    : {payment.reservation.space.name}\n"
+                f"Période   : {payment.reservation.start_datetime.strftime('%d/%m/%Y %H:%M')} → "
+                f"{payment.reservation.end_datetime.strftime('%d/%m/%Y %H:%M')}\n\n"
+                f"Méthode   : {payment.get_method_display()}\n"
+                f"Montant   : {payment.amount} {payment.currency}\n"
+                f"Transaction: {payment.transaction_id}\n"
+            )
+            response.write(content)
+            return response
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -826,12 +834,11 @@ class StripeWebhookView(APIView):
         payment.save(update_fields=['status', 'paid_at'])
 
         reservation = payment.reservation
-        if reservation.status == Reservation.Status.PENDING:
-            reservation.status = Reservation.Status.CONFIRMED
-            reservation.save(update_fields=['status', 'updated_at'])
+        reservation.status = Reservation.Status.PAID
+        reservation.save(update_fields=['status', 'updated_at'])
 
         logger.info(
-            "[Webhook] Paiement #%s confirmé — réservation #%s → confirmed",
+            "[Webhook] Paiement #%s confirmé — réservation #%s → paid",
             payment.id, reservation.id,
         )
 
@@ -846,6 +853,11 @@ class StripeWebhookView(APIView):
                     'reservation_id': reservation.id,
                 }
             )
+        except Exception:
+            pass
+
+        try:
+            send_payment_confirmed_to_admin.delay(payment.id)
         except Exception:
             pass
 
@@ -964,12 +976,11 @@ class FedaPayWebhookView(APIView):
         payment.save(update_fields=['status', 'paid_at'])
 
         reservation = payment.reservation
-        if reservation.status == Reservation.Status.PENDING:
-            reservation.status = Reservation.Status.CONFIRMED
-            reservation.save(update_fields=['status', 'updated_at'])
+        reservation.status = Reservation.Status.PAID
+        reservation.save(update_fields=['status', 'updated_at'])
 
         logger.info(
-            "[FedaPay Webhook] Paiement #%s Mobile Money approuvé — réservation #%s → confirmed",
+            "[FedaPay Webhook] Paiement #%s Mobile Money approuvé — réservation #%s → paid",
             payment.id, reservation.id,
         )
 
@@ -984,6 +995,11 @@ class FedaPayWebhookView(APIView):
                     'reservation_id': reservation.id,
                 }
             )
+        except Exception:
+            pass
+
+        try:
+            send_payment_confirmed_to_admin.delay(payment.id)
         except Exception:
             pass
 

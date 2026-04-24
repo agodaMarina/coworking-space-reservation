@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 0; }
+  .container { max-width: 600px; margin: 30px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+  .header { background: #1e40af; color: #fff; padding: 24px 32px; }
+  .header h1 { margin: 0; font-size: 22px; }
+  .header p { margin: 6px 0 0; opacity: .85; font-size: 14px; }
+  .body { padding: 32px; color: #333; }
+  .info-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+  .info-table td { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; }
+  .info-table td:first-child { font-weight: bold; color: #555; width: 140px; }
+  .btn { display: inline-block; margin-top: 24px; padding: 12px 28px; background: #1e40af; color: #fff; text-decoration: none; border-radius: 6px; font-size: 15px; }
+  .footer { background: #f9fafb; padding: 16px 32px; font-size: 12px; color: #888; border-top: 1px solid #eee; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>CoworkSpace — Nouvelle demande de réservation</h1>
+    <p>Action requise : confirmer ou rejeter</p>
+  </div>
+  <div class="body">
+    <p>Bonjour {% if admin %}{{ admin.full_name }}{% else %}Administrateur{% endif %},</p>
+    <p>Une nouvelle demande de réservation a été soumise et attend votre validation.</p>
+
+    <table class="info-table">
+      <tr><td>Demandeur</td><td>{{ reservation.user.full_name }} ({{ reservation.user.email }})</td></tr>
+      <tr><td>Espace</td><td>{{ reservation.space.name }}</td></tr>
+      <tr><td>Début</td><td>{{ reservation.start_datetime|date:"d/m/Y H:i" }}</td></tr>
+      <tr><td>Fin</td><td>{{ reservation.end_datetime|date:"d/m/Y H:i" }}</td></tr>
+      <tr><td>Facturation</td><td>{{ reservation.get_billing_type_display }}</td></tr>
+      <tr><td>Montant</td><td><strong>{{ reservation.total_price }} FCFA</strong></td></tr>
+      {% if reservation.notes %}<tr><td>Notes</td><td>{{ reservation.notes }}</td></tr>{% endif %}
+    </table>
+
+    <a href="http://localhost:4200/admin/reservations" class="btn">Gérer la réservation</a>
+  </div>
+  <div class="footer">
+    CoworkSpace · Lomé, Togo · Ceci est un email automatique, ne pas répondre.
+  </div>
+</div>
+</body>
+</html>

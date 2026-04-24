@@ -8,11 +8,13 @@ class Notification(models.Model):
 
     class Type(models.TextChoices):
         RESERVATION_RECEIVED   = 'reservation_received',   'Demande reçue'
+        RESERVATION_REQUEST    = 'reservation_request',    'Nouvelle demande (admin)'
         RESERVATION_CONFIRMED  = 'reservation_confirmed',  'Réservation confirmée'
         RESERVATION_REJECTED   = 'reservation_rejected',   'Réservation rejetée'
         RESERVATION_CANCELLED  = 'reservation_cancelled',  'Réservation annulée'
         RESERVATION_REMINDER   = 'reservation_reminder',   'Rappel de réservation'
         PAYMENT_COMPLETED      = 'payment_completed',      'Paiement effectué'
+        PAYMENT_RECEIVED       = 'payment_received',       'Paiement reçu (admin)'
         PAYMENT_FAILED         = 'payment_failed',         'Paiement échoué'
         PAYMENT_REFUNDED       = 'payment_refunded',       'Paiement remboursé'
 
@@ -54,6 +56,16 @@ class Notification(models.Model):
         choices=Status.choices,
         default=Status.PENDING,
         verbose_name='statut'
+    )
+    title = models.CharField(
+        max_length=200,
+        blank=True,
+        default='',
+        verbose_name='titre'
+    )
+    is_read = models.BooleanField(
+        default=False,
+        verbose_name='lue'
     )
     message = models.TextField(
         verbose_name='message'

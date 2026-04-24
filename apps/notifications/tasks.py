@@ -160,6 +160,191 @@ def send_payment_completed_email(self, user_email, user_name, payment_data):
         raise self.retry(exc=exc, countdown=60)
 
 
+@shared_task(bind=True, max_retries=3)
+def send_reservation_request_to_admin(self, reservation_id):
+    """Notifie tous les admins d'une nouvelle demande de réservation."""
+    try:
+        from apps.reservations.models import Reservation
+        from apps.notifications.models import Notification
+        from apps.accounts.models import User
+
+        reservation = Reservation.objects.select_related('user', 'space').get(id=reservation_id)
+        admin_users = User.objects.filter(role='admin')
+
+        for admin in admin_users:
+            Notification.objects.create(
+                user=admin,
+                reservation=reservation,
+                notification_type=Notification.Type.RESERVATION_REQUEST,
+                title='Nouvelle demande de réservation',
+                message=(
+                    f"Demande de {reservation.user.full_name} pour "
+                    f"{reservation.space.name} du "
+                    f"{reservation.start_datetime.strftime('%d/%m/%Y %H:%M')} au "
+                    f"{reservation.end_datetime.strftime('%d/%m/%Y %H:%M')}. "
+                    f"Montant : {reservation.total_price} FCFA."
+                ),
+                channel='email',
+                status='sent',
+                sent_at=timezone.now(),
+            )
+            try:
+                html_content = render_to_string(
+                    'emails/admin_reservation_request.html',
+                    {'reservation': reservation, 'admin': admin}
+                )
+                email = EmailMultiAlternatives(
+                    subject=f"[CoworkSpace] Nouvelle demande de réservation #{reservation.id}",
+                    body=f"Nouvelle demande de {reservation.user.full_name} pour {reservation.space.name}.",
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    to=[admin.email],
+                )
+                email.attach_alternative(html_content, 'text/html')
+                email.send()
+            except Exception:
+                pass
+
+        return f"Admins notifiés pour réservation #{reservation_id}"
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=60)
+
+
+@shared_task(bind=True, max_retries=3)
+def send_reservation_confirmed_to_user(self, reservation_id):
+    """Notifie l'utilisateur que sa réservation a été confirmée par l'admin."""
+    try:
+        from apps.reservations.models import Reservation
+        from apps.notifications.models import Notification
+
+        reservation = Reservation.objects.select_related('user', 'space').get(id=reservation_id)
+
+        Notification.objects.create(
+            user=reservation.user,
+            reservation=reservation,
+            notification_type=Notification.Type.RESERVATION_CONFIRMED,
+            title='Réservation confirmée !',
+            message=(
+                f"Votre réservation #{reservation.id} pour {reservation.space.name} "
+                f"a été confirmée. Vous pouvez procéder au paiement de {reservation.total_price} FCFA."
+            ),
+            channel='email',
+            status='sent',
+            sent_at=timezone.now(),
+        )
+
+        html_content = render_to_string(
+            'emails/user_reservation_confirmed.html',
+            {'reservation': reservation}
+        )
+        email = EmailMultiAlternatives(
+            subject=f"[CoworkSpace] Votre réservation #{reservation.id} est confirmée",
+            body=(
+                f"Bonjour {reservation.user.full_name},\n\n"
+                f"Votre réservation pour {reservation.space.name} a été confirmée.\n"
+                f"Montant à régler : {reservation.total_price} FCFA."
+            ),
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[reservation.user.email],
+        )
+        email.attach_alternative(html_content, 'text/html')
+        email.send()
+
+        return f"Utilisateur notifié : réservation #{reservation_id} confirmée"
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=60)
+
+
+@shared_task(bind=True, max_retries=3)
+def send_reservation_rejected_to_user(self, reservation_id):
+    """Notifie l'utilisateur que sa réservation a été rejetée par l'admin."""
+    try:
+        from apps.reservations.models import Reservation
+        from apps.notifications.models import Notification
+
+        reservation = Reservation.objects.select_related('user', 'space').get(id=reservation_id)
+
+        Notification.objects.create(
+            user=reservation.user,
+            reservation=reservation,
+            notification_type=Notification.Type.RESERVATION_REJECTED,
+            title='Réservation non confirmée',
+            message=(
+                f"Votre réservation #{reservation.id} pour {reservation.space.name} "
+                f"n'a pas pu être confirmée. Vous pouvez soumettre une nouvelle demande."
+            ),
+            channel='email',
+            status='sent',
+            sent_at=timezone.now(),
+        )
+
+        html_content = render_to_string(
+            'emails/user_reservation_rejected.html',
+            {'reservation': reservation}
+        )
+        email = EmailMultiAlternatives(
+            subject=f"[CoworkSpace] Réservation #{reservation.id} — Suite de votre demande",
+            body=(
+                f"Bonjour {reservation.user.full_name},\n\n"
+                f"Nous sommes désolés, votre réservation #{reservation.id} "
+                f"pour {reservation.space.name} n'a pas pu être confirmée."
+            ),
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[reservation.user.email],
+        )
+        email.attach_alternative(html_content, 'text/html')
+        email.send()
+
+        return f"Utilisateur notifié : réservation #{reservation_id} rejetée"
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=60)
+
+
+@shared_task(bind=True, max_retries=3)
+def send_payment_confirmed_to_admin(self, payment_id):
+    """Notifie les admins qu'un paiement a été reçu."""
+    try:
+        from apps.payments.models import Payment
+        from apps.notifications.models import Notification
+        from apps.accounts.models import User
+
+        payment = Payment.objects.select_related('user', 'reservation__space').get(id=payment_id)
+        admin_users = User.objects.filter(role='admin')
+
+        for admin in admin_users:
+            Notification.objects.create(
+                user=admin,
+                notification_type=Notification.Type.PAYMENT_RECEIVED,
+                title='Paiement reçu',
+                message=(
+                    f"Paiement de {payment.amount} XOF reçu de {payment.user.full_name} "
+                    f"pour {payment.reservation.space.name} "
+                    f"(réservation #{payment.reservation.id})."
+                ),
+                channel='email',
+                status='sent',
+                sent_at=timezone.now(),
+            )
+            try:
+                html_content = render_to_string(
+                    'emails/admin_payment_received.html',
+                    {'payment': payment, 'admin': admin}
+                )
+                email = EmailMultiAlternatives(
+                    subject=f"[CoworkSpace] Paiement reçu — {payment.amount} XOF",
+                    body=f"Paiement de {payment.amount} XOF de {payment.user.full_name}.",
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    to=[admin.email],
+                )
+                email.attach_alternative(html_content, 'text/html')
+                email.send()
+            except Exception:
+                pass
+
+        return f"Admins notifiés du paiement #{payment_id}"
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=60)
+
+
 @shared_task
 def mark_completed_reservations():
     """

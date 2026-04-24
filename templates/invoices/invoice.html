@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page {
+    size: A4;
+    margin: 2cm;
+  }
+  body {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    color: #1a1a1a;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding-bottom: 24px;
+    border-bottom: 3px solid #1e40af;
+    margin-bottom: 32px;
+  }
+  .brand h1 {
+    margin: 0;
+    font-size: 26px;
+    color: #1e40af;
+    letter-spacing: -0.5px;
+  }
+  .brand p {
+    margin: 4px 0 0;
+    color: #666;
+    font-size: 12px;
+  }
+  .invoice-meta {
+    text-align: right;
+  }
+  .invoice-meta .invoice-number {
+    font-size: 20px;
+    font-weight: bold;
+    color: #1e40af;
+  }
+  .invoice-meta p {
+    margin: 4px 0;
+    color: #555;
+    font-size: 12px;
+  }
+  .section {
+    margin-bottom: 28px;
+  }
+  .section-title {
+    font-size: 11px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #888;
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: 6px;
+    margin-bottom: 12px;
+  }
+  .two-col {
+    display: flex;
+    gap: 32px;
+  }
+  .two-col .col {
+    flex: 1;
+  }
+  .info-row {
+    display: flex;
+    margin-bottom: 6px;
+  }
+  .info-label {
+    width: 130px;
+    font-weight: 600;
+    color: #555;
+    flex-shrink: 0;
+  }
+  .info-value {
+    color: #1a1a1a;
+  }
+  .amount-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 16px;
+  }
+  .amount-table th {
+    background: #f3f4f6;
+    padding: 10px 14px;
+    text-align: left;
+    font-size: 12px;
+    color: #555;
+    font-weight: 600;
+  }
+  .amount-table td {
+    padding: 12px 14px;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .amount-table .total-row td {
+    border-top: 2px solid #1e40af;
+    font-weight: bold;
+    font-size: 15px;
+    color: #1e40af;
+    padding-top: 14px;
+  }
+  .status-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    background: #dcfce7;
+    color: #16a34a;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .footer {
+    margin-top: 48px;
+    padding-top: 16px;
+    border-top: 1px solid #e5e7eb;
+    font-size: 11px;
+    color: #999;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="brand">
+    <h1>CoworkSpace</h1>
+    <p>Lomé, Togo · contact@coworkspace.tg</p>
+  </div>
+  <div class="invoice-meta">
+    <div class="invoice-number">FACT-{{ payment.id|stringformat:"06d" }}</div>
+    <p>Date : {{ payment.paid_at|date:"d/m/Y H:i" }}</p>
+    <p>Transaction : {{ payment.transaction_id }}</p>
+    <span class="status-badge">{{ payment.get_status_display }}</span>
+  </div>
+</div>
+
+<div class="two-col">
+  <div class="col section">
+    <div class="section-title">Facturé à</div>
+    <div class="info-row"><span class="info-label">Nom</span><span class="info-value">{{ payment.user.full_name }}</span></div>
+    <div class="info-row"><span class="info-label">Email</span><span class="info-value">{{ payment.user.email }}</span></div>
+  </div>
+  <div class="col section">
+    <div class="section-title">Détails du paiement</div>
+    <div class="info-row"><span class="info-label">Méthode</span><span class="info-value">{{ payment.get_method_display }}</span></div>
+    <div class="info-row"><span class="info-label">Devise</span><span class="info-value">{{ payment.currency }}</span></div>
+    <div class="info-row"><span class="info-label">Date</span><span class="info-value">{{ payment.paid_at|date:"d/m/Y H:i" }}</span></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Détails de la réservation</div>
+  <div class="info-row"><span class="info-label">Espace</span><span class="info-value">{{ payment.reservation.space.name }}</span></div>
+  {% if payment.reservation.space.address %}
+  <div class="info-row"><span class="info-label">Adresse</span><span class="info-value">{{ payment.reservation.space.address }}</span></div>
+  {% endif %}
+  <div class="info-row"><span class="info-label">Début</span><span class="info-value">{{ payment.reservation.start_datetime|date:"d/m/Y H:i" }}</span></div>
+  <div class="info-row"><span class="info-label">Fin</span><span class="info-value">{{ payment.reservation.end_datetime|date:"d/m/Y H:i" }}</span></div>
+  <div class="info-row"><span class="info-label">Facturation</span><span class="info-value">{{ payment.reservation.get_billing_type_display }}</span></div>
+</div>
+
+<div class="section">
+  <div class="section-title">Récapitulatif</div>
+  <table class="amount-table">
+    <thead>
+      <tr>
+        <th>Description</th>
+        <th>Espace</th>
+        <th style="text-align:right">Montant</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Location d'espace de coworking<br><small style="color:#888">Réservation #{{ payment.reservation.id }}</small></td>
+        <td>{{ payment.reservation.space.name }}</td>
+        <td style="text-align:right">{{ payment.amount }} {{ payment.currency }}</td>
+      </tr>
+      <tr class="total-row">
+        <td colspan="2">Total</td>
+        <td style="text-align:right">{{ payment.amount }} {{ payment.currency }}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="footer">
+  CoworkSpace · Lomé, Togo · RCCM TG-LOM-2024-XXX · NIF XXXXXXXX<br>
+  Cette facture est générée automatiquement et constitue un justificatif de paiement valide.<br>
+  En cas de question, contactez-nous à contact@coworkspace.tg
+</div>
+
+</body>
+</html>

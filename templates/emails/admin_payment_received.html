@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 0; }
+  .container { max-width: 600px; margin: 30px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+  .header { background: #7c3aed; color: #fff; padding: 24px 32px; }
+  .header h1 { margin: 0; font-size: 22px; }
+  .header p { margin: 6px 0 0; opacity: .85; font-size: 14px; }
+  .body { padding: 32px; color: #333; }
+  .info-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+  .info-table td { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; }
+  .info-table td:first-child { font-weight: bold; color: #555; width: 140px; }
+  .amount-badge { font-size: 24px; font-weight: bold; color: #16a34a; }
+  .btn { display: inline-block; margin-top: 24px; padding: 12px 28px; background: #7c3aed; color: #fff; text-decoration: none; border-radius: 6px; font-size: 15px; }
+  .footer { background: #f9fafb; padding: 16px 32px; font-size: 12px; color: #888; border-top: 1px solid #eee; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>Paiement reçu</h1>
+    <p>Un paiement vient d'être confirmé</p>
+  </div>
+  <div class="body">
+    <p>Bonjour {% if admin %}{{ admin.full_name }}{% else %}Administrateur{% endif %},</p>
+    <p>Un paiement a été reçu et confirmé sur la plateforme.</p>
+
+    <p class="amount-badge">{{ payment.amount }} FCFA</p>
+
+    <table class="info-table">
+      <tr><td>Client</td><td>{{ payment.user.full_name }} ({{ payment.user.email }})</td></tr>
+      <tr><td>Espace</td><td>{{ payment.reservation.space.name }}</td></tr>
+      <tr><td>Réservation</td><td>#{{ payment.reservation.id }}</td></tr>
+      <tr><td>Méthode</td><td>{{ payment.get_method_display }}</td></tr>
+      <tr><td>Transaction</td><td>{{ payment.transaction_id }}</td></tr>
+      <tr><td>Date</td><td>{{ payment.paid_at|date:"d/m/Y H:i" }}</td></tr>
+    </table>
+
+    <a href="http://localhost:4200/admin/payments" class="btn">Voir les paiements</a>
+  </div>
+  <div class="footer">
+    CoworkSpace · Lomé, Togo · Ceci est un email automatique, ne pas répondre.
+  </div>
+</div>
+</body>
+</html>

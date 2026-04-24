@@ -7,8 +7,6 @@ from drf_spectacular.utils import extend_schema
 
 from .models import Reservation
 from apps.notifications.models import Notification
-from apps.payments.models import Payment
-from services.payment_gateway import process_local_payment
 from .serializers import (
     ReservationSerializer,
     ReservationCreateSerializer,
@@ -22,6 +20,9 @@ from apps.notifications.tasks import (
     send_reservation_confirmed_email,
     send_reservation_cancelled_email,
     send_reservation_rejected_email,
+    send_reservation_request_to_admin,
+    send_reservation_confirmed_to_user,
+    send_reservation_rejected_to_user,
 )
 
 
@@ -67,7 +68,7 @@ class ReservationCreateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Notification en base (synchrone) + email async
+        # Notification en base (synchrone) + email async à l'utilisateur
         Notification.create(
             user=request.user,
             notification_type=Notification.Type.RESERVATION_RECEIVED,
@@ -87,6 +88,12 @@ class ReservationCreateView(APIView):
                     'total_price': str(reservation.total_price),
                 }
             )
+        except Exception:
+            pass
+
+        # Notifier les admins de la nouvelle demande
+        try:
+            send_reservation_request_to_admin.delay(reservation.id)
         except Exception:
             pass
 
@@ -228,92 +235,49 @@ class ReservationUpdateView(generics.UpdateAPIView):
         serializer.save()
         new_status = instance.status
 
-        # Notification en base + email async si le statut a changé
         if new_status != previous_status:
-            reservation_data = {
-                'id': instance.id,
-                'space_name': instance.space.name,
-                'start_datetime': str(instance.start_datetime),
-                'end_datetime': str(instance.end_datetime),
-                'duration_hours': instance.duration_hours,
-                'total_price': str(instance.total_price),
-            }
-
-            # Création automatique d'un paiement cash en attente à la confirmation
-            payment_created = None
+            # Enregistrer qui a confirmé et quand
             if new_status == Reservation.Status.CONFIRMED:
-                already_paid = Payment.objects.filter(
-                    reservation=instance,
-                    status__in=[Payment.Status.PENDING, Payment.Status.COMPLETED],
-                ).exists()
+                from django.utils import timezone as tz
+                instance.confirmed_at = tz.now()
+                instance.confirmed_by = request.user
+                instance.save(update_fields=['confirmed_at', 'confirmed_by'])
+                try:
+                    send_reservation_confirmed_to_user.delay(instance.id)
+                except Exception:
+                    pass
 
-                if not already_paid:
-                    result = process_local_payment(
-                        amount_xof=instance.total_price,
-                        method=Payment.Method.CASH,
-                        user=instance.user,
-                    )
-                    payment_created = Payment.objects.create(
-                        reservation=instance,
-                        user=instance.user,
-                        amount=instance.total_price,
-                        currency='XOF',
-                        status=Payment.Status.PENDING,
-                        method=Payment.Method.CASH,
-                        transaction_id=result['transaction_id'],
-                    )
+            elif new_status == Reservation.Status.REJECTED:
+                try:
+                    send_reservation_rejected_to_user.delay(instance.id)
+                except Exception:
+                    pass
 
-            notif_map = {
-                Reservation.Status.CONFIRMED: (
-                    Notification.Type.RESERVATION_CONFIRMED,
-                    f"Votre réservation #{instance.id} ({instance.space.name}) a été confirmée. "
-                    f"Montant à régler : {instance.total_price} FCFA.",
-                    send_reservation_confirmed_email,
-                ),
-                Reservation.Status.CANCELLED: (
-                    Notification.Type.RESERVATION_CANCELLED,
-                    f"Votre réservation #{instance.id} ({instance.space.name}) a été annulée.",
-                    send_reservation_cancelled_email,
-                ),
-                Reservation.Status.REJECTED: (
-                    Notification.Type.RESERVATION_REJECTED,
-                    f"Votre réservation #{instance.id} ({instance.space.name}) n'a pas pu être confirmée.",
-                    send_reservation_rejected_email,
-                ),
-            }
-
-            if new_status in notif_map:
-                notif_type, message, email_task = notif_map[new_status]
-
+            elif new_status == Reservation.Status.CANCELLED:
                 Notification.create(
                     user=instance.user,
-                    notification_type=notif_type,
-                    message=message,
+                    notification_type=Notification.Type.RESERVATION_CANCELLED,
+                    message=f"Votre réservation #{instance.id} ({instance.space.name}) a été annulée.",
                     reservation=instance,
                 )
-
                 try:
-                    email_task.delay(
+                    send_reservation_cancelled_email.delay(
                         user_email=instance.user.email,
                         user_name=instance.user.full_name,
-                        reservation_data=reservation_data,
+                        reservation_data={
+                            'id': instance.id,
+                            'space_name': instance.space.name,
+                            'start_datetime': str(instance.start_datetime),
+                            'end_datetime': str(instance.end_datetime),
+                        },
                     )
                 except Exception:
                     pass
 
-        response_data = {
+        return Response({
             'message': 'Réservation mise à jour avec succès.',
             'reservation': ReservationSerializer(instance).data,
-        }
-        if payment_created:
-            from apps.payments.serializers import PaymentSerializer
-            response_data['payment_created'] = PaymentSerializer(payment_created).data
-            response_data['payment_note'] = (
-                f"Paiement en attente créé automatiquement ({payment_created.amount} XOF). "
-                f"À valider via PATCH /api/payments/{payment_created.id}/confirm/ une fois encaissé."
-            )
-
-        return Response(response_data)
+        })
 
 class SpaceAvailabilityView(APIView):
     """Vérifier la disponibilité d'un espace"""
@@ -378,3 +342,48 @@ class SpaceAvailabilityView(APIView):
             response_data['billing_type'] = billing_type
 
         return Response(response_data, status=status.HTTP_200_OK)
+
+
+class InitiatePaymentView(APIView):
+    """
+    Démarre le processus de paiement pour une réservation confirmée.
+    Passe le statut de 'confirmed' à 'payment_pending'.
+    Accessible uniquement par le propriétaire de la réservation.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=None,
+        responses={200: ReservationSerializer},
+        summary="Initier le paiement d'une réservation confirmée",
+        tags=['Réservations']
+    )
+    def post(self, request, pk):
+        try:
+            reservation = Reservation.objects.get(id=pk, user=request.user)
+        except Reservation.DoesNotExist:
+            return Response(
+                {'error': 'Réservation introuvable.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if reservation.status != Reservation.Status.CONFIRMED:
+            return Response(
+                {
+                    'error': (
+                        "La réservation doit être confirmée par l'admin avant d'initier le paiement. "
+                        f"Statut actuel : {reservation.get_status_display()}."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        reservation.status = Reservation.Status.PAYMENT_PENDING
+        reservation.save(update_fields=['status', 'updated_at'])
+
+        return Response({
+            'message': 'Vous pouvez maintenant procéder au paiement.',
+            'reservation_id': reservation.id,
+            'status': reservation.status,
+            'reservation': ReservationSerializer(reservation).data,
+        }, status=status.HTTP_200_OK)

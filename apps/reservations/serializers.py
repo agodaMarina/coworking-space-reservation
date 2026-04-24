@@ -19,6 +19,8 @@ class ReservationSerializer(serializers.ModelSerializer):
         read_only=True
     )
     duration_hours = serializers.SerializerMethodField()
+    can_pay = serializers.SerializerMethodField()
+    confirmed_by = UserProfileSerializer(read_only=True)
 
     class Meta:
         model = Reservation
@@ -28,14 +30,19 @@ class ReservationSerializer(serializers.ModelSerializer):
             'status', 'status_display',
             'total_price', 'billing_type', 'billing_type_display',
             'duration_hours', 'is_recurring', 'recurrence_rule',
-            'notes', 'created_at', 'updated_at'
+            'notes', 'can_pay', 'confirmed_at', 'confirmed_by',
+            'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'total_price', 'status', 'created_at', 'updated_at'
+            'id', 'total_price', 'status', 'confirmed_at', 'confirmed_by',
+            'created_at', 'updated_at'
         ]
 
     def get_duration_hours(self, obj) -> float:
         return obj.duration_hours
+
+    def get_can_pay(self, obj) -> bool:
+        return obj.status in ['confirmed', 'payment_pending']
 
 
 class ReservationCreateSerializer(serializers.Serializer):
@@ -77,11 +84,13 @@ class ReservationCreateSerializer(serializers.Serializer):
 
 
 VALID_TRANSITIONS = {
-    Reservation.Status.PENDING:   {Reservation.Status.CONFIRMED, Reservation.Status.REJECTED, Reservation.Status.CANCELLED},
-    Reservation.Status.CONFIRMED: {Reservation.Status.CANCELLED, Reservation.Status.COMPLETED},
-    Reservation.Status.CANCELLED: set(),
-    Reservation.Status.COMPLETED: set(),
-    Reservation.Status.REJECTED:  set(),
+    Reservation.Status.PENDING:         {Reservation.Status.CONFIRMED, Reservation.Status.REJECTED, Reservation.Status.CANCELLED},
+    Reservation.Status.CONFIRMED:       {Reservation.Status.PAYMENT_PENDING, Reservation.Status.CANCELLED},
+    Reservation.Status.PAYMENT_PENDING: {Reservation.Status.PAID, Reservation.Status.CANCELLED},
+    Reservation.Status.PAID:            {Reservation.Status.COMPLETED},
+    Reservation.Status.CANCELLED:       set(),
+    Reservation.Status.COMPLETED:       set(),
+    Reservation.Status.REJECTED:        set(),
 }
 
 
