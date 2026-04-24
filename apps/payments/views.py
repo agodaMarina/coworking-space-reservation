@@ -29,13 +29,16 @@ from apps.reservations.models import Reservation
 from apps.accounts.permissions import IsAdminUser
 from apps.notifications.tasks import send_payment_completed_email
 
-# ── Import du gateway Stripe ───
+# ── Import du gateway unifié ───
 from services.payment_gateway import (
     create_payment_intent,
     retrieve_payment_intent,
     process_refund,
     process_local_payment,
     construct_webhook_event,
+    create_fedapay_transaction,
+    retrieve_fedapay_transaction,
+    construct_fedapay_webhook_event,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,8 +46,11 @@ logger = logging.getLogger(__name__)
 # Méthodes traitées via Stripe
 STRIPE_METHODS = [Payment.Method.CARD]
 
+# Méthode traitée via FedaPay (Mobile Money)
+FEDAPAY_METHODS = [Payment.Method.MOBILE_MONEY]
+
 # Méthodes locales (validation admin manuelle)
-LOCAL_METHODS = [Payment.Method.CASH, Payment.Method.BANK, Payment.Method.MOBILE_MONEY]
+LOCAL_METHODS = [Payment.Method.CASH, Payment.Method.BANK]
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -162,7 +168,54 @@ class PaymentCreateView(APIView):
             }, status=status.HTTP_201_CREATED)
 
         # ════════════════════════════════════════════════════════════════════
-        # CAS 2 : Mobile money, espèces, virement → validation admin
+        # CAS 2 : Mobile Money → FedaPay (push USSD, XOF natif)
+        # ════════════════════════════════════════════════════════════════════
+        if method == Payment.Method.MOBILE_MONEY:
+            phone_number = data.get('phone_number', '')
+            operator = data.get('operator', 'mtn')
+
+            result = create_fedapay_transaction(
+                amount_xof=amount,
+                user=request.user,
+                reservation=reservation,
+                phone_number=phone_number,
+                operator=operator,
+            )
+
+            if not result['success']:
+                return Response(
+                    {'error': result.get('error', 'Erreur lors de la création du paiement mobile.')},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            payment = Payment.objects.create(
+                reservation=reservation,
+                user=request.user,
+                amount=amount,
+                currency='XOF',
+                status=Payment.Status.PENDING,
+                method=Payment.Method.MOBILE_MONEY,
+                transaction_id=result['transaction_id'],  # "FEDA-{id}"
+            )
+
+            logger.info(
+                "[Payment] FedaPay #%s créé — %s — %s XOF — push USSD envoyé",
+                payment.id, result['transaction_id'], amount,
+            )
+
+            return Response({
+                'message': result['message'],
+                'payment': PaymentSerializer(payment).data,
+                'fedapay': {
+                    'transaction_id': result['transaction_id'],
+                    'operator': result['operator_label'],
+                    'payment_url': result.get('payment_url'),
+                    'note': 'Validez le paiement sur votre téléphone. Le statut sera mis à jour automatiquement via webhook.',
+                },
+            }, status=status.HTTP_201_CREATED)
+
+        # ════════════════════════════════════════════════════════════════════
+        # CAS 3 : Espèces / Virement → validation admin manuelle
         # ════════════════════════════════════════════════════════════════════
         result = process_local_payment(
             amount_xof=amount,
@@ -175,13 +228,13 @@ class PaymentCreateView(APIView):
             user=request.user,
             amount=amount,
             currency='XOF',
-            status=Payment.Status.PENDING,   # Admin valide manuellement
+            status=Payment.Status.PENDING,
             method=method,
             transaction_id=result['transaction_id'],
         )
 
         logger.info(
-            "[Payment] Local #%s créé — %s — %s XOF — en attente validation",
+            "[Payment] Local #%s créé — %s — %s XOF — en attente validation admin",
             payment.id, method, amount,
         )
 
@@ -824,3 +877,145 @@ class StripeWebhookView(APIView):
             payment.status = Payment.Status.REFUNDED
             payment.save(update_fields=['status'])
             logger.info("[Webhook] Paiement #%s → refunded via webhook", payment.id)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# POST /api/payments/fedapay-webhook/
+# FedaPay Webhook — source de vérité pour les paiements Mobile Money
+# ════════════════════════════════════════════════════════════════════════════
+
+class FedaPayWebhookView(APIView):
+    """
+    Endpoint FedaPay Webhook.
+
+    FedaPay appelle ce endpoint pour notifier les événements de transaction
+    Mobile Money (approbation, refus, remboursement).
+
+    Configuration dans le Dashboard FedaPay :
+        https://app.fedapay.com/settings/webhooks
+        URL     : https://ton-domaine.com/api/payments/fedapay-webhook/
+        Événements :
+            transaction.approved   → paiement approuvé par l'opérateur
+            transaction.declined   → paiement refusé / timeout
+            transaction.refunded   → remboursement effectué
+
+    En local (tests) :
+        Utiliser ngrok ou équivalent pour exposer localhost.
+        Désactiver temporairement la vérification de signature en sandbox.
+
+    Sécurité : vérification HMAC-SHA256 via X-FEDAPAY-SIGNATURE.
+    """
+    permission_classes = []
+    authentication_classes = []
+
+    @extend_schema(exclude=True)
+    def post(self, request):
+        payload = request.body
+        sig_header = request.META.get('HTTP_X_FEDAPAY_SIGNATURE', '')
+
+        try:
+            from fedapay import error as _fedapay_error
+            event = construct_fedapay_webhook_event(payload, sig_header)
+        except _fedapay_error.SignatureVerificationError:
+            logger.error("[FedaPay Webhook] Signature HMAC invalide — requête rejetée")
+            return HttpResponse('Invalid signature', status=400)
+        except ValueError:
+            logger.error("[FedaPay Webhook] Payload JSON invalide")
+            return HttpResponse('Invalid payload', status=400)
+
+        event_name = event.get('name', '')
+        entity = event.get('entity', {})
+        fedapay_id = entity.get('id')
+        transaction_id = f"FEDA-{fedapay_id}" if fedapay_id else None
+
+        logger.info("[FedaPay Webhook] Événement : %s — transaction: %s", event_name, transaction_id)
+
+        if event_name == 'transaction.approved':
+            self._handle_transaction_approved(transaction_id, entity)
+
+        elif event_name == 'transaction.declined':
+            reason = entity.get('decline_reason', 'Inconnu')
+            self._handle_transaction_declined(transaction_id, reason)
+
+        elif event_name == 'transaction.refunded':
+            self._handle_transaction_refunded(transaction_id)
+
+        # FedaPay exige une réponse 200 rapide
+        return HttpResponse(status=200)
+
+    def _handle_transaction_approved(self, transaction_id: str, entity: dict) -> None:
+        """Confirme le paiement Mobile Money après approbation FedaPay."""
+        if not transaction_id:
+            return
+        try:
+            payment = Payment.objects.select_related('reservation', 'user').get(
+                transaction_id=transaction_id
+            )
+        except Payment.DoesNotExist:
+            logger.warning("[FedaPay Webhook] Aucun paiement trouvé pour %s", transaction_id)
+            return
+
+        if payment.status == Payment.Status.COMPLETED:
+            return  # idempotent
+
+        now = timezone.now()
+        payment.status = Payment.Status.COMPLETED
+        payment.paid_at = now
+        payment.save(update_fields=['status', 'paid_at'])
+
+        reservation = payment.reservation
+        if reservation.status == Reservation.Status.PENDING:
+            reservation.status = Reservation.Status.CONFIRMED
+            reservation.save(update_fields=['status', 'updated_at'])
+
+        logger.info(
+            "[FedaPay Webhook] Paiement #%s Mobile Money approuvé — réservation #%s → confirmed",
+            payment.id, reservation.id,
+        )
+
+        try:
+            send_payment_completed_email.delay(
+                user_email=payment.user.email,
+                user_name=payment.user.full_name,
+                payment_data={
+                    'amount': str(payment.amount),
+                    'method': payment.get_method_display(),
+                    'transaction_id': payment.transaction_id,
+                    'reservation_id': reservation.id,
+                }
+            )
+        except Exception:
+            pass
+
+    def _handle_transaction_declined(self, transaction_id: str, reason: str) -> None:
+        """Marque le paiement Mobile Money comme échoué."""
+        if not transaction_id:
+            return
+        try:
+            payment = Payment.objects.get(transaction_id=transaction_id)
+        except Payment.DoesNotExist:
+            logger.warning("[FedaPay Webhook] Aucun paiement pour transaction refusée %s", transaction_id)
+            return
+
+        if payment.status == Payment.Status.PENDING:
+            payment.status = Payment.Status.FAILED
+            payment.save(update_fields=['status'])
+            logger.warning(
+                "[FedaPay Webhook] Paiement #%s décliné — raison: %s",
+                payment.id, reason,
+            )
+
+    def _handle_transaction_refunded(self, transaction_id: str) -> None:
+        """Marque le paiement Mobile Money comme remboursé."""
+        if not transaction_id:
+            return
+        try:
+            payment = Payment.objects.get(transaction_id=transaction_id)
+        except Payment.DoesNotExist:
+            logger.warning("[FedaPay Webhook] Aucun paiement pour remboursement %s", transaction_id)
+            return
+
+        if payment.status != Payment.Status.REFUNDED:
+            payment.status = Payment.Status.REFUNDED
+            payment.save(update_fields=['status'])
+            logger.info("[FedaPay Webhook] Paiement #%s → refunded", payment.id)

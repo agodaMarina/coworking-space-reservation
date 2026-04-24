@@ -1,32 +1,39 @@
-# apps/payments/payment_gateway.py
+# services/payment_gateway.py
 """
-Service de paiement — Stripe (mode test) + méthodes locales (cash, virement).
+Service de paiement unifié — trois backends :
 
-Choix d'architecture : Payment Intent (pas Checkout Session)
-→ Adapté à un frontend Angular SPA qui gère son propre formulaire
-→ Flux : backend crée le PI → renvoie client_secret → Angular confirme via Stripe.js
-→ Webhook reçoit la confirmation serveur (source of truth)
+  1. Stripe       → paiement par carte (method='card')
+                    XOF→EUR converti (Stripe ne supporte pas XOF)
+                    Flux : backend crée PI → client_secret → Angular confirme via Stripe.js
 
-Stripe ne supporte pas XOF (FCFA).
-Stratégie : les montants sont stockés en XOF en base, et convertis en EUR
-pour Stripe via un taux de référence FCFA→EUR (1 EUR ≈ 655.957 XOF).
+  2. FedaPay      → Mobile Money (method='mobile_money') — Flooz MTN / T-Money Moov
+                    XOF supporté nativement — aucune conversion
+                    SDK v0.3.0 = webhook uniquement → transactions via REST API directe
+                    Flux : backend POST /transactions → retourne payment_url → user paie
+                           → FedaPay appelle webhook → backend confirme en base
+
+  3. Local        → espèces / virement (method='cash' | 'bank_transfer')
+                    Pas d'API tierce — validation manuelle par l'admin
 """
 
 import uuid
+import json
 import logging
 from decimal import Decimal
 
+import requests
 import stripe
+from fedapay import Webhook as _FedaPayWebhook
+from fedapay import error as _fedapay_error
 from django.conf import settings
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
-# ── Initialisation Stripe ────────────────────────────────────────────────────
+# ── Initialisation Stripe ─────────────────────────────────────────────────────
 stripe.api_key = settings.STRIPE['SECRET_KEY']
 
-# Taux de conversion FCFA → EUR (taux fixe zone CFA)
-# 1 EUR = 655.957 XOF (parité fixe officielle)
+# Taux de conversion FCFA → EUR (parité fixe zone CFA — 1 EUR = 655.957 XOF)
 XOF_TO_EUR_RATE = Decimal('655.957')
 
 
@@ -270,6 +277,282 @@ def process_refund(transaction_id: str, amount_xof: Decimal = None) -> dict:
     except stripe.error.StripeError as e:
         logger.error("[Stripe] Erreur remboursement %s : %s", transaction_id, str(e))
         return {'success': False, 'error': 'Erreur lors du remboursement.'}
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# FEDAPAY — Mobile Money (Flooz MTN / T-Money Moov)
+#
+# SDK fedapay v0.3.0 = webhook uniquement (Webhook.construct_event).
+# Création / récupération de transactions → REST API directe via requests.
+#
+# Flux paiement :
+#   1. Backend POST /v1/transactions  →  reçoit {id, receipt_url, status}
+#   2. Backend renvoie receipt_url au frontend
+#   3. Frontend redirige l'utilisateur vers receipt_url (page FedaPay hébergée)
+#   4. L'utilisateur saisit son numéro Mobile Money et valide
+#   5. FedaPay envoie POST → /api/payments/fedapay-webhook/ (transaction.approved / declined)
+#   6. Backend met à jour Payment + Reservation
+# ────────────────────────────────────────────────────────────────────────────
+
+_FEDAPAY_BASE_URLS = {
+    'sandbox': 'https://sandbox.fedapay.com/api',
+    'live':    'https://api.fedapay.com/v1',
+}
+
+FEDAPAY_OPERATORS = {
+    'mtn':  'Flooz (MTN)',
+    'moov': 'T-Money (Moov)',
+}
+
+
+def _fedapay_base_url() -> str:
+    env = settings.FEDAPAY.get('ENVIRONMENT', 'sandbox')
+    return _FEDAPAY_BASE_URLS.get(env, _FEDAPAY_BASE_URLS['sandbox'])
+
+
+def _fedapay_session() -> requests.Session:
+    session = requests.Session()
+    session.headers.update({
+        'Authorization': f"Bearer {settings.FEDAPAY['SECRET_KEY']}",
+        'Content-Type': 'application/json',
+    })
+    return session
+
+
+def _parse_phone(phone_number: str) -> tuple:
+    """Retourne (local_number, country_code) depuis un numéro international."""
+    clean = phone_number.strip().replace(' ', '').replace('-', '')
+    prefixes = {
+        '+228': 'tg', '00228': 'tg',
+        '+229': 'bj', '00229': 'bj',
+        '+225': 'ci', '00225': 'ci',
+        '+221': 'sn', '00221': 'sn',
+        '+226': 'bf', '00226': 'bf',
+    }
+    for prefix, country in prefixes.items():
+        if clean.startswith(prefix):
+            return clean[len(prefix):], country
+    return clean.lstrip('0') or clean, 'tg'
+
+
+def create_fedapay_transaction(
+    amount_xof: Decimal,
+    user,
+    reservation,
+    phone_number: str,
+    operator: str = 'mtn',
+) -> dict:
+    """
+    Crée une transaction FedaPay via l'API REST et retourne le lien de paiement.
+
+    Le SDK fedapay v0.3.0 ne couvre que les webhooks — on appelle l'API directement.
+
+    Flux :
+        POST /v1/transactions  →  {id, receipt_url, status: 'pending'}
+        Le frontend redirige l'utilisateur vers receipt_url.
+        L'utilisateur choisit Mobile Money sur la page FedaPay et valide.
+        FedaPay notifie via webhook → transaction.approved / transaction.declined.
+
+    Args:
+        amount_xof   : Montant en XOF (Decimal) — FedaPay supporte XOF nativement
+        user         : Instance User Django
+        reservation  : Instance Reservation Django
+        phone_number : Numéro Mobile Money du client (ex: "+22890123456")
+        operator     : 'mtn' (Flooz) ou 'moov' (T-Money) — indicatif pour le frontend
+
+    Returns:
+        dict avec :
+          - success (bool)
+          - transaction_id (str) : "FEDA-{id}" → stocker dans Payment.transaction_id
+          - fedapay_id (int)     : ID numérique FedaPay
+          - payment_url (str)    : receipt_url → à ouvrir par le frontend
+          - status (str)         : 'pending'
+          - operator_label (str) : libellé de l'opérateur
+          - message (str)
+        Ou en cas d'erreur :
+          - success (bool) False
+          - error (str)
+          - error_code (str)
+    """
+    local_number, country_code = _parse_phone(phone_number)
+
+    payload = {
+        'description': (
+            f"Réservation #{reservation.id} — "
+            f"{reservation.space} — "
+            f"{reservation.start_datetime.strftime('%d/%m/%Y %H:%M')}"
+        ),
+        'amount': int(amount_xof),
+        'currency': {'iso': 'XOF'},
+        'callback_url': settings.FEDAPAY['CALLBACK_URL'],
+        'customer': {
+            'firstname': getattr(user, 'first_name', '') or '',
+            'lastname':  getattr(user, 'last_name',  '') or '',
+            'email':     str(user.email),
+            'phone_number': {
+                'number':  local_number,
+                'country': country_code,
+            },
+        },
+    }
+
+    try:
+        session = _fedapay_session()
+        response = session.post(
+            f"{_fedapay_base_url()}/transactions",
+            json=payload,
+            timeout=15,
+        )
+
+        if response.status_code == 401:
+            logger.critical("[FedaPay] Clé API invalide — vérifier FEDAPAY_SECRET_KEY dans .env")
+            return {'success': False, 'error': 'Erreur de configuration du service de paiement mobile.', 'error_code': 'auth_error'}
+
+        if response.status_code in (400, 422):
+            data = response.json()
+            error_msg = data.get('message') or str(data)
+            logger.error("[FedaPay] Requête invalide : %s", error_msg)
+            return {'success': False, 'error': error_msg, 'error_code': 'invalid_request'}
+
+        response.raise_for_status()
+        data = response.json()
+
+        # La réponse FedaPay enveloppe la transaction dans une clé "v1/transaction"
+        tx = data.get('v1/transaction') or data.get('transaction') or data
+        fedapay_id  = tx['id']
+        receipt_url = tx.get('receipt_url') or tx.get('url')
+
+        logger.info(
+            "[FedaPay] Transaction #%s créée — %s XOF — %s — user: %s",
+            fedapay_id, amount_xof, FEDAPAY_OPERATORS.get(operator, operator), user.email,
+        )
+
+        return {
+            'success': True,
+            'fedapay_id': fedapay_id,
+            'transaction_id': f"FEDA-{fedapay_id}",
+            'status': tx.get('status', 'pending'),
+            'payment_url': receipt_url,
+            'operator': operator,
+            'operator_label': FEDAPAY_OPERATORS.get(operator, operator),
+            'message': (
+                f"Transaction Mobile Money créée. Redirigez l'utilisateur vers l'URL de paiement "
+                f"pour valider via {FEDAPAY_OPERATORS.get(operator, operator)}."
+            ),
+        }
+
+    except requests.exceptions.ConnectionError:
+        logger.error("[FedaPay] Impossible de joindre l'API FedaPay (réseau)")
+        return {'success': False, 'error': 'Service de paiement mobile temporairement indisponible.', 'error_code': 'network_error'}
+
+    except requests.exceptions.Timeout:
+        logger.error("[FedaPay] Timeout lors de la création de la transaction")
+        return {'success': False, 'error': 'Le service de paiement mobile ne répond pas. Réessayez.', 'error_code': 'timeout'}
+
+    except Exception as e:
+        logger.error("[FedaPay] Erreur inattendue lors de la création : %s", str(e))
+        return {'success': False, 'error': 'Erreur lors de la création du paiement mobile.', 'error_code': 'fedapay_error'}
+
+
+def retrieve_fedapay_transaction(fedapay_id) -> dict:
+    """
+    Récupère le statut d'une transaction FedaPay via GET /v1/transactions/{id}.
+
+    Utilisé pour vérifier côté serveur qu'un paiement Mobile Money est bien
+    approuvé (ne jamais faire confiance au seul callback frontend).
+
+    Statuts FedaPay :
+        pending     → en attente de paiement
+        approved    → paiement confirmé par l'opérateur ✅
+        declined    → refusé (solde insuffisant, annulé, timeout)
+        refunded    → remboursé
+        transferred → fonds transférés au marchand
+        canceled    → annulé avant paiement
+
+    Args:
+        fedapay_id : ID numérique FedaPay, ou chaîne "FEDA-{id}" ou "{id}"
+
+    Returns:
+        dict avec 'success', 'paid' (bool), 'status', 'amount_xof', 'paid_at'
+    """
+    raw_id = str(fedapay_id).replace('FEDA-', '')
+    try:
+        numeric_id = int(raw_id)
+    except ValueError:
+        return {'success': False, 'error': 'Identifiant FedaPay invalide.', 'error_code': 'invalid_id'}
+
+    try:
+        session = _fedapay_session()
+        response = session.get(
+            f"{_fedapay_base_url()}/transactions/{numeric_id}",
+            timeout=15,
+        )
+
+        if response.status_code == 404:
+            logger.error("[FedaPay] Transaction introuvable : %s", numeric_id)
+            return {'success': False, 'error': 'Transaction Mobile Money introuvable.', 'error_code': 'not_found'}
+
+        if response.status_code == 401:
+            return {'success': False, 'error': 'Erreur de configuration du service de paiement mobile.', 'error_code': 'auth_error'}
+
+        response.raise_for_status()
+        data = response.json()
+
+        tx     = data.get('v1/transaction') or data.get('transaction') or data
+        status = tx.get('status', 'pending')
+        paid   = status in ('approved', 'transferred')
+
+        return {
+            'success': True,
+            'fedapay_id': numeric_id,
+            'transaction_id': f"FEDA-{numeric_id}",
+            'status': status,
+            'paid': paid,
+            'amount_xof': Decimal(str(tx['amount'])) if paid else None,
+            'currency': 'XOF',
+            'paid_at': timezone.now() if paid else None,
+        }
+
+    except requests.exceptions.ConnectionError:
+        logger.error("[FedaPay] Réseau indisponible lors de la vérification de %s", fedapay_id)
+        return {'success': False, 'error': 'Service de paiement mobile indisponible.', 'error_code': 'network_error'}
+
+    except Exception as e:
+        logger.error("[FedaPay] Erreur récupération transaction %s : %s", fedapay_id, str(e))
+        return {'success': False, 'error': 'Erreur lors de la vérification du paiement mobile.'}
+
+
+def construct_fedapay_webhook_event(payload: bytes, sig_header: str) -> dict:
+    """
+    Valide la signature du webhook FedaPay et retourne l'événement décodé.
+
+    FedaPay utilise le header 'X-FEDAPAY-SIGNATURE' au format :
+        t={timestamp},s={hmac_sha256}
+    où le contenu signé est "{timestamp}.{payload_utf8}"
+
+    Si FEDAPAY_WEBHOOK_SECRET n'est pas configuré (sandbox local / tests),
+    la vérification est ignorée et le JSON est parsé directement.
+
+    Lève :
+        fedapay.error.SignatureVerificationError → signature invalide ou timestamp hors tolérance
+        ValueError                               → payload JSON malformé
+    """
+    secret = settings.FEDAPAY.get('WEBHOOK_SECRET', '')
+    env    = settings.FEDAPAY.get('ENVIRONMENT', 'sandbox')
+
+    # Secret absent ou non encore configuré (placeholder) → skip en sandbox
+    secret_is_real = bool(secret) and not secret.startswith('whsec_feda_...')
+
+    if not secret_is_real:
+        logger.warning("[FedaPay Webhook] FEDAPAY_WEBHOOK_SECRET non configuré — vérification ignorée (sandbox)")
+        return json.loads(payload)
+
+    # En sandbox, autoriser les requêtes sans header de signature (tests locaux)
+    if not sig_header and env == 'sandbox':
+        logger.warning("[FedaPay Webhook] Requête sans signature acceptée en sandbox")
+        return json.loads(payload)
+
+    return _FedaPayWebhook.construct_event(payload, sig_header, secret)
 
 
 # ────────────────────────────────────────────────────────────────────────────

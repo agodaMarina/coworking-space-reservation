@@ -55,6 +55,27 @@ class PaymentCreateSerializer(serializers.Serializer):
             ('bank_transfer', 'Virement bancaire'),
         ]
     )
+    # Champs requis uniquement pour method='mobile_money' (FedaPay)
+    phone_number = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=20,
+        help_text="Numéro Mobile Money (ex: +22890123456). Requis pour mobile_money.",
+    )
+    operator = serializers.ChoiceField(
+        required=False,
+        choices=[('mtn', 'Flooz (MTN)'), ('moov', 'T-Money (Moov)')],
+        default='mtn',
+        help_text="Opérateur Mobile Money : 'mtn' (Flooz) ou 'moov' (T-Money).",
+    )
+
+    def validate(self, data):
+        if data.get('method') == 'mobile_money':
+            if not data.get('phone_number'):
+                raise serializers.ValidationError(
+                    {'phone_number': "Le numéro de téléphone est obligatoire pour un paiement Mobile Money."}
+                )
+        return data
 
     def validate_reservation_id(self, value):
         try:

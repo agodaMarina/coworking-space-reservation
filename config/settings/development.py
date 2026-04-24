@@ -15,10 +15,17 @@ DATABASES = {
     }
 }
 
-STRIPE={
-    'SECRET_KEY': config('STRIPE_SECRET_KEY'),
-    'PUBLISHABLE_KEY': config('STRIPE_PUBLISHABLE_KEY'),
-    'WEBHOOK_SECRET': config('STRIPE_WEBHOOK_SECRET')
+STRIPE = {
+    'SECRET_KEY':      config('STRIPE_SECRET_KEY',      default=''),
+    'PUBLISHABLE_KEY': config('STRIPE_PUBLISHABLE_KEY', default=''),
+    'WEBHOOK_SECRET':  config('STRIPE_WEBHOOK_SECRET',  default=''),
+}
+
+FEDAPAY = {
+    'SECRET_KEY':     config('FEDAPAY_SECRET_KEY',     default=''),
+    'WEBHOOK_SECRET': config('FEDAPAY_WEBHOOK_SECRET', default=''),
+    'ENVIRONMENT':    config('FEDAPAY_ENVIRONMENT',    default='sandbox'),
+    'CALLBACK_URL':   config('FEDAPAY_CALLBACK_URL',   default='http://localhost:4200/payment/callback'),
 }
 
 CORS_ALLOW_ALL_ORIGINS = True

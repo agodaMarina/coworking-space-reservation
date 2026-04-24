@@ -125,6 +125,17 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Disable APPEND_SLASH for API compatibility
 APPEND_SLASH = False
 
+# ── FedaPay ───────────────────────────────────────────────────────────────────
+# Passerelle Mobile Money ouest-africaine (Flooz MTN / T-Money Moov).
+# Supporte XOF nativement — aucune conversion de devise requise.
+# Sandbox : https://sandbox-api.fedapay.com  |  Live : https://api.fedapay.com
+FEDAPAY = {
+    'SECRET_KEY':     config('FEDAPAY_SECRET_KEY',     default=''),
+    'WEBHOOK_SECRET': config('FEDAPAY_WEBHOOK_SECRET', default=''),
+    'ENVIRONMENT':    config('FEDAPAY_ENVIRONMENT',    default='sandbox'),  # 'sandbox' | 'live'
+    'CALLBACK_URL':   config('FEDAPAY_CALLBACK_URL',   default='http://localhost:4200/payment/callback'),
+}
+
 AUTH_PASSWORD_VALIDATORS = [
     {
         "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"
