@@ -21,3 +21,5 @@ app.conf.beat_schedule = {
         'schedule': crontab(hour=8, minute=0),  # chaque jour à 8h
     },
 }
+
+#celery -A config worker -l info

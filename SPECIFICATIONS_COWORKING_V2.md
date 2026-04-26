@@ -1,7 +1,7 @@
 # DOCUMENT DE SPÉCIFICATIONS TECHNIQUES
 ## Coworking Space Booking Platform — Refactoring Réservation & Paiement v2.0
 
-> **Stack :** Angular 21 · Django 5 · Stripe · FedaPay  
+> **Stack :** Angular 21 · Django 5 · Stripe · FedaPay
 > **Date :** Avril 2026 · Lomé, Togo
 
 ---
@@ -123,9 +123,9 @@ EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
 EMAIL_HOST=smtp.gmail.com
 EMAIL_PORT=587
 EMAIL_USE_TLS=True
-EMAIL_HOST_USER=votre_email@gmail.com
-EMAIL_HOST_PASSWORD=votre_app_password_google
-DEFAULT_FROM_EMAIL=CoworkSpace <votre_email@gmail.com>
+EMAIL_HOST_USER=rinouchagd@gmail.com
+EMAIL_HOST_PASSWORD=
+DEFAULT_FROM_EMAIL=CoworkSpace <rinouchagd@gmail.com>
 ```
 
 > **Important :** utiliser un **App Password Google** (Compte Google → Sécurité → Mots de passe des applications), pas le mot de passe principal du compte.

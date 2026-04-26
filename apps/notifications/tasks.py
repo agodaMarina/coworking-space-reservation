@@ -137,23 +137,60 @@ def send_reservation_cancelled_email(self, user_email, user_name, reservation_da
 
 @shared_task(bind=True, max_retries=3)
 def send_payment_completed_email(self, user_email, user_name, payment_data):
-    """Envoie un email de confirmation de paiement"""
+    """Envoie un email HTML + notification in-app de confirmation de paiement à l'utilisateur."""
     try:
-        subject = f"Paiement confirmé — {payment_data['amount']} FCFA"
-        text_content = f"""
-        Bonjour {user_name},
-        Votre paiement de {payment_data['amount']} FCFA a été confirmé.
-        Méthode : {payment_data['method']}
-        Transaction : {payment_data['transaction_id']}
-        Réservation : #{payment_data['reservation_id']}
-        """
-        send_mail(
-            subject=subject,
-            message=text_content,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user_email],
-            fail_silently=False,
+        from apps.payments.models import Payment
+        from apps.notifications.models import Notification
+
+        # ── Notification in-app ───────────────────────────────────────────────
+        try:
+            payment = Payment.objects.select_related('user', 'reservation').get(
+                transaction_id=payment_data['transaction_id']
+            )
+            Notification.objects.create(
+                user=payment.user,
+                reservation=payment.reservation,
+                notification_type=Notification.Type.PAYMENT_COMPLETED,
+                title='Paiement confirmé !',
+                message=(
+                    f"Votre paiement de {payment.amount} FCFA pour la réservation "
+                    f"#{payment.reservation.id} ({payment.reservation.space.name}) a été confirmé."
+                ),
+                channel='email',
+                status='sent',
+                sent_at=timezone.now(),
+            )
+        except Exception:
+            pass
+
+        # ── Email HTML ────────────────────────────────────────────────────────
+        subject = f"[CoworkSpace] Paiement confirmé — {payment_data['amount']} FCFA"
+        html_content = render_to_string(
+            'emails/payment_completed.html',
+            {
+                'user_name': user_name,
+                'amount': payment_data['amount'],
+                'method': payment_data['method'],
+                'transaction_id': payment_data['transaction_id'],
+                'reservation_id': payment_data['reservation_id'],
+            }
         )
+        text_content = (
+            f"Bonjour {user_name},\n\n"
+            f"Votre paiement de {payment_data['amount']} FCFA a été confirmé.\n"
+            f"Méthode : {payment_data['method']}\n"
+            f"Transaction : {payment_data['transaction_id']}\n"
+            f"Réservation : #{payment_data['reservation_id']}\n"
+        )
+        email = EmailMultiAlternatives(
+            subject=subject,
+            body=text_content,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[user_email],
+        )
+        email.attach_alternative(html_content, 'text/html')
+        email.send()
+
         return f"Email de paiement envoyé à {user_email}"
 
     except Exception as exc:

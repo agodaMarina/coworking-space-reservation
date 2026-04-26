@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 0; }
+  .container { max-width: 600px; margin: 30px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+  .header { background: #16a34a; color: #fff; padding: 24px 32px; }
+  .header h1 { margin: 0; font-size: 22px; }
+  .header p { margin: 6px 0 0; opacity: .85; font-size: 14px; }
+  .body { padding: 32px; color: #333; }
+  .info-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+  .info-table td { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; }
+  .info-table td:first-child { font-weight: bold; color: #555; width: 140px; }
+  .amount-badge { font-size: 28px; font-weight: bold; color: #16a34a; margin: 16px 0; }
+  .check-icon { font-size: 40px; margin-bottom: 12px; }
+  .footer { background: #f9fafb; padding: 16px 32px; font-size: 12px; color: #888; border-top: 1px solid #eee; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>✅ Paiement confirmé</h1>
+    <p>Votre réservation est maintenant active</p>
+  </div>
+  <div class="body">
+    <p>Bonjour {{ user_name }},</p>
+    <p>Votre paiement a bien été reçu et confirmé. Merci !</p>
+
+    <p class="amount-badge">{{ amount }} FCFA</p>
+
+    <table class="info-table">
+      <tr><td>Réservation</td><td>#{{ reservation_id }}</td></tr>
+      <tr><td>Méthode</td><td>{{ method }}</td></tr>
+      <tr><td>Transaction</td><td>{{ transaction_id }}</td></tr>
+    </table>
+
+    <p style="font-size: 14px; color: #555;">
+      Votre espace est confirmé et vous attend. Vous pouvez télécharger votre facture depuis votre espace client.
+    </p>
+  </div>
+  <div class="footer">
+    CoworkSpace · Lomé, Togo · Ceci est un email automatique, ne pas répondre.
+  </div>
+</div>
+</body>
+</html>
